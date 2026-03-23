@@ -33,7 +33,7 @@ Note: We will use the exact same evaluation protocol and data split to evaluate 
 ## 3. Baselines
 To evaluate our model in a meaningful context, we will compare it against two baselines:
 
-* **Simple/Statistical Baseline:** A Random Forest classifier trained on flattened, downsampled versions of the images (or utilizing basic PCA feature extraction). This satisfies the requirement to include a "simple" machine learning approach.
+* **Simple/Statistical Baseline:** A Logistic Regression classifier trained on flattened, downsampled versions of the images (utilizing PCA for dimensionality reduction and feature extraction). This satisfies the requirement to include a "simple" statistical approach to compare our more complex models against.
 * **Machine Learning Baseline:** A standard Convolutional Neural Network (e.g., ResNet-50 or DenseNet-121) trained on the same dataset. This serves as a strong traditional benchmark for medical image classification.
 
 ## 4. Proposed Model & Hyperparameter Tuning

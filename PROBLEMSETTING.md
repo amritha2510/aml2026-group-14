@@ -4,13 +4,6 @@ We want to use the [Chest X-Ray Pneumonia Dataset](https://www.kaggle.com/datase
 
 The dataset has **~5,800 images** split into train/validation/test. It’s relatively small and **imbalanced**, especially in the validation and test sets, which we’ll take into account.
 
-### Key points  
-- Treat it as a **3-class classification problem** (normal / bacterial / viral)  (Normal means clean lungs, bacterial means lobular, viral means spread clouds in lungs)
-- Fine-tune a pretrained **Vision Transformer**
-- Adjust the provided train/val/test split due to imbalance
-- Handle imbalance via experimentation over data augmentation or weighting   
-
-
 # Problem Setting: Chest X-Ray Pneumonia Classification
 
 ## 1. Formal Problem Setting
@@ -21,26 +14,34 @@ Formally, given a dataset of chest X-ray images $D = \{(x_i, y_i)\}_{i=1}^N$, le
 * $y = 1$: Bacterial Pneumonia
 * $y = 2$: Viral Pneumonia
 
-We aim to learn a parameterized mapping function $f_{\theta}: x \rightarrow y$ that minimizes loss on unseen data. 
+We aim to learn a parameterized mapping function $f_{\theta}: x \rightarrow y$ that minimizes our chosen cost function on unseen data. 
 
 ## 2. Evaluation Protocol
 We will utilize the Chest X-Ray Pneumonia dataset from Kaggle, which contains approximately 5,800 images. Because the provided train, validation, and test sets are heavily imbalanced, we will adjust the splits using stratified sampling to ensure a representative distribution of all three classes across our evaluation splits. 
 
-**Metrics:** Our problem definition leads to **Multiclass AUROC** (Area Under the Receiver Operating Characteristic curve) and **Macro F1-Score** as the natural best choices for our primary evaluation metrics. 
+**Primary Metric:** In a medical diagnostic context, missing a pneumonia diagnosis (a False Negative) is the worst-case scenario that must be avoided. Therefore, our primary evaluation metric will be **Macro Recall (Sensitivity)**, aiming to minimize missed diagnoses across all classes. We will also track the Macro F1-Score for broader context.
 
-Note: We will use the exact same evaluation protocol and data split to evaluate all our baseline models and our final proposed model.
+**Note**: We will use the exact same evaluation protocol and data split to evaluate all our baseline models and our final proposed model.
 
 ## 3. Baselines
-To evaluate our model in a meaningful context, we will compare it against two baselines:
+To evaluate our model in a meaningful context, we will compare it against three baselines:
 
-* **Simple/Statistical Baseline:** A Logistic Regression classifier trained on flattened, downsampled versions of the images (utilizing PCA for dimensionality reduction and feature extraction). This satisfies the requirement to include a "simple" statistical approach to compare our more complex models against.
-* **Machine Learning Baseline:** A standard Convolutional Neural Network (e.g., ResNet-50 or DenseNet-121) trained on the same dataset. This serves as a strong traditional benchmark for medical image classification.
+1. **Simple/Statistical Baseline:** A Logistic Regression classifier trained on flattened, downsampled versions of the images (utilizing PCA for dimensionality reduction and feature extraction). This satisfies the requirement to include a "simple" statistical approach to compare our more complex models against.
+2. **Machine Learning Baseline:** A standard Convolutional Neural Network (e.g., ResNet-50 or DenseNet-121) trained on the same dataset. This serves as a strong traditional benchmark for medical image classification.
+3. **Standard ViT Baseline:** A standard, pre-trained Vision Transformer simply fine-tuned on our dataset, serving as the direct baseline for our custom architectural changes.
 
 ## 4. Proposed Model & Hyperparameter Tuning
+Our primary proposed model builds upon the Vision Transformer (ViT), which satisfies the requirement to use an architecture covered after LSTMs. Because standard ViTs lack the spatial inductive biases of CNNs and are notoriously data-hungry, simply fine-tuning from scratch on 5,800 images leads to overfitting and brittle representations.
+
+**Our Architectural Twist (Dual-Branch Feature Fusion):** 
+Instead of a standard sequential model, we will use a parallel dual-branch architecture:
+* **Stream 1 (Local Focus):** A lightweight CNN branch (e.g., early layers of ResNet-18) to extract fine-grained, lower-level textural features of the pneumonia opacities.
+* **Stream 2 (Global Focus):** A pre-trained ViT branch to process the original image and extract higher-level, global structural context of the chest cavity. 
+
+**Noise Injection for Generalization:**
+The final feature representations from both branches will be concatenated (feature fusion) before the final classification layer. Because ViTs are highly prone to memorizing small datasets, we will introduce **embedding-level noise injection** (via targeted heavy Dropout) specifically at the end of the ViT branch before the fusion. This acts as a strict regularizer, forcing the model to rely on both local CNN textures and global ViT structure, thereby reducing memorization and improving generalization.
+
+To further address the class imbalance, we will experiment with data augmentation techniques and class weighting during training. 
+We will also tune the hyperparameters of this custom model in a reasonable scope, specifically focusing on the learning rate, the noise/dropout rate, and weight decay.
 
 
-Our primary model will be a **Vision Transformer (ViT)**, which satisfies the requirement to use an architecture covered after LSTMs. 
-
-Because ViTs lack the spatial inductive biases of CNNs and are highly data-hungry, training from scratch on 5,800 images would likely lead to severe overfitting. Therefore, we will utilize a pre-trained ViT model (e.g., pre-trained on ImageNet) and fine-tune it on our specific dataset.
-
-To address the class imbalance, we will experiment with data augmentation techniques and class weighting during training. We will also tune the hyperparameters of the ViT in a reasonable scope, specifically focusing on the learning rate, weight decay, and dropout rates..

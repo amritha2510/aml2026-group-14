@@ -13,8 +13,8 @@ preprocessing:
 logistic_regression:
   output_dir: ./outputs/logistic_regression
   experiment_name: logistic_regression
-  max_iter: 1000
+  max_iter: 5000
   class_weight: balanced
-  pca_n_components: 0.95
+  pca_n_components: 0.85
   random_state: 42
   solver: lbfgs

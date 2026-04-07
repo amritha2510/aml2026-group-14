@@ -1,0 +1,11 @@
+data_root: ./chest_xray
+metadata_output_path: ./outputs/metadata/metadata.csv
+analysis_output_dir: ./outputs/data_analysis
+preprocessed_output_root: ./outputs/preprocessed/chest_xray_grayscale
+preprocessed_metadata_output_path: ./outputs/preprocessed/preprocessed_metadata.csv
+
+preprocessing:
+  grayscale: true
+  resize:
+    enabled: true
+    size: [64, 64]

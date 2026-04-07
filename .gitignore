@@ -1,3 +1,6 @@
 chest_xray
 .idea
 .DS_Store
+
+outputs/*
+__pycache__/

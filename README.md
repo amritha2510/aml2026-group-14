@@ -33,3 +33,6 @@ Image → grayscale → resize (Configurable via config.yaml)
 - Validation set has no viral, we have to change that and also confirm with the TA's - as it was rejected before (Maybe we need to explain we use the data is 3 classes, not 2)
 - Confirm with TA's if we need to have the exact same preprocessing for all models, i.e. shoul we try to make each model perform its best, or compare them all using the exact same data input
 
+
+## TODO: validation should be a valid set, and should be the only one used in fine-tuning
+## Check what visuals we would need to make a presentation at the end of the term, so that they can already be added

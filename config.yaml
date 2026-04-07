@@ -8,7 +8,7 @@ preprocessing:
   grayscale: true
   resize:
     enabled: true
-    size: [64, 64]
+    size: [32, 32]
 
 logistic_regression:
   output_dir: ./outputs/logistic_regression
@@ -18,3 +18,4 @@ logistic_regression:
   pca_n_components: 0.85
   random_state: 42
   solver: lbfgs
+  regularization_strength: 1 

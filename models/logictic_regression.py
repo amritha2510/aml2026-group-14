@@ -34,6 +34,7 @@ def get_lr_config(config: dict) -> dict:
         "pca_n_components",
         "random_state",
         "solver",
+        "regularization_strength",
     ]
 
     missing = [k for k in required_keys if k not in lr_cfg]
@@ -48,6 +49,7 @@ def get_lr_config(config: dict) -> dict:
         "pca_n_components": lr_cfg["pca_n_components"],
         "random_state": int(lr_cfg["random_state"]),
         "solver": lr_cfg["solver"],
+        "regularization_strength": float(lr_cfg["regularization_strength"]),
     }
 
 
@@ -117,6 +119,7 @@ def build_pipeline(lr_cfg: dict) -> Pipeline:
             (
                 "clf",
                 LogisticRegression(
+                    C=lr_cfg["regularization_strength"],
                     max_iter=lr_cfg["max_iter"],
                     class_weight=lr_cfg["class_weight"],
                     random_state=lr_cfg["random_state"],
@@ -126,6 +129,64 @@ def build_pipeline(lr_cfg: dict) -> Pipeline:
             ),
         ]
     )
+    
+def save_prediction_examples(
+    df: pd.DataFrame,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    output_dir: Path,
+    n_correct_per_class: int = 5,
+    n_wrong_per_pair: int = 5,
+) -> None:
+    import shutil
+
+    output_dir = Path(output_dir)
+    correct_dir = output_dir / "samples" / "correct"
+    wrong_dir = output_dir / "samples" / "incorrect"
+
+    correct_dir.mkdir(parents=True, exist_ok=True)
+    wrong_dir.mkdir(parents=True, exist_ok=True)
+
+    analysis_df = df.copy().reset_index(drop=True)
+    analysis_df["y_true"] = y_true
+    analysis_df["y_pred"] = y_pred
+    analysis_df["true_label"] = analysis_df["y_true"].map(ID_TO_LABEL)
+    analysis_df["pred_label"] = analysis_df["y_pred"].map(ID_TO_LABEL)
+    analysis_df["is_correct"] = analysis_df["y_true"] == analysis_df["y_pred"]
+
+    for class_id, class_name in ID_TO_LABEL.items():
+        class_correct = analysis_df[
+            (analysis_df["y_true"] == class_id) & (analysis_df["is_correct"])
+        ].head(n_correct_per_class)
+
+        for i, row in enumerate(class_correct.itertuples(index=False), start=1):
+            src = Path(row.filepath)
+            dst = correct_dir / f"{class_name}_{i}_{src.name}"
+            shutil.copy2(src, dst)
+
+    wrong_df = analysis_df[~analysis_df["is_correct"]].copy()
+
+    for true_id, true_name in ID_TO_LABEL.items():
+        for pred_id, pred_name in ID_TO_LABEL.items():
+            if true_id == pred_id:
+                continue
+
+            pair_df = wrong_df[
+                (wrong_df["y_true"] == true_id) & (wrong_df["y_pred"] == pred_id)
+            ].head(n_wrong_per_pair)
+
+            for i, row in enumerate(pair_df.itertuples(index=False), start=1):
+                src = Path(row.filepath)
+                dst = wrong_dir / f"{true_name}_as_{pred_name}_{i}_{src.name}"
+                shutil.copy2(src, dst)
+
+    summary = (
+        analysis_df[["filepath", "true_label", "pred_label", "is_correct"]]
+        .copy()
+    )
+    summary.to_csv(output_dir / "samples" / "prediction_examples.csv", index=False)
+
+    print(f"[INFO] Saved prediction examples to: {output_dir / 'samples'}")    
 
 
 def main() -> None:
@@ -198,6 +259,17 @@ def main() -> None:
         metrics_by_split=metrics,
         experiment_name=lr_cfg["experiment_name"],
         extra_artifacts=extra_artifacts,
+    )
+    
+    y_test_pred = pipeline.predict(X_test)
+
+    save_prediction_examples(
+        df=test_df,
+        y_true=y_test,
+        y_pred=y_test_pred,
+        output_dir=run_dir,
+        n_correct_per_class=5,
+        n_wrong_per_pair=5,
     )
 
     joblib.dump(pipeline, run_dir / "logistic_regression_pipeline.joblib")

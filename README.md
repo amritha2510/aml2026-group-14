@@ -20,6 +20,10 @@ models → use preprocessed dataset
 # Current Data Pipeline
 Image → grayscale → resize (Configurable via config.yaml)
 
+# Evaluation
+- Use metrics.py for a common evaluation
+- Use "macro recall" as primary, and take the rest as secondary (i.e. diagnostics), add more if you find valuable
+
 # Logistic Regression Pipeline
 
 - Image → grayscale → resize (64x64) → flatten → PCA → Logistic Regression

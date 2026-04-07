@@ -9,3 +9,12 @@ preprocessing:
   resize:
     enabled: true
     size: [64, 64]
+
+logistic_regression:
+  output_dir: ./outputs/logistic_regression
+  experiment_name: logistic_regression
+  max_iter: 1000
+  class_weight: balanced
+  pca_n_components: 0.95
+  random_state: 42
+  solver: lbfgs

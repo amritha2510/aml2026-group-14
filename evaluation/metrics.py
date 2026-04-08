@@ -109,6 +109,7 @@ class ClassificationEvaluator:
         timestamp: str,
         config: dict,
         metrics_by_split: dict,
+        run_metadata: dict | None = None,
     ) -> dict:
         row = {
             "timestamp": timestamp,
@@ -118,7 +119,13 @@ class ClassificationEvaluator:
 
         flat_config = self._flatten_dict(config)
         for key, value in flat_config.items():
-            row[f"config.{key}"] = value
+            if key != "output_dir":
+                row[f"config.{key}"] = value
+
+        if run_metadata:
+            flat_run_metadata = self._flatten_dict(run_metadata)
+            for key, value in flat_run_metadata.items():
+                row[f"run.{key}"] = value
 
         for split_name, split_metrics in metrics_by_split.items():
             if "macro_recall" in split_metrics:
@@ -156,6 +163,7 @@ class ClassificationEvaluator:
         metrics_by_split: dict,
         experiment_name: str | None = None,
         extra_artifacts: dict | None = None,
+        run_metadata: dict | None = None,
     ) -> Path:
         run_dir, timestamp = self.create_run_dir(base_output_dir, experiment_name)
 
@@ -172,6 +180,10 @@ class ClassificationEvaluator:
             "saved_splits": list(metrics_by_split.keys()),
             "run_dir": str(run_dir),
         }
+
+        if run_metadata:
+            run_summary["run_metadata"] = run_metadata
+
         self.save_json(run_summary, run_dir / "run_summary.json")
 
         if extra_artifacts:
@@ -182,6 +194,7 @@ class ClassificationEvaluator:
             timestamp=timestamp,
             config=config,
             metrics_by_split=metrics_by_split,
+            run_metadata=run_metadata,
         )
         self.append_experiment_row(base_output_dir, experiment_row)
 

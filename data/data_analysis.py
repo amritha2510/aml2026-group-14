@@ -370,3 +370,147 @@ def plot_pixel_intensity_distribution(df, save_dir, sample_size=500):
     plt.tight_layout()
     plt.savefig(save_dir / "pixel_intensity_distribution.png", dpi=200)
     plt.close()        
+    
+    
+def compute_image_intensity_stats(df: pd.DataFrame) -> pd.DataFrame:
+    records = []
+
+    for path in df[df["ok"]]["filepath"]:
+        try:
+            with Image.open(path) as img:
+                arr = np.array(img.convert("L"))
+
+                records.append({
+                    "filepath": path,
+                    "mean_intensity": float(arr.mean()),
+                    "std_intensity": float(arr.std()),
+                    "min_intensity": int(arr.min()),
+                    "max_intensity": int(arr.max()),
+                })
+        except Exception:
+            continue
+
+    return pd.DataFrame(records)    
+
+def print_intensity_stats_summary(stats_df: pd.DataFrame) -> None:
+    print("\n" + "=" * 60)
+    print("IMAGE INTENSITY STATISTICS SUMMARY")
+    print("=" * 60)
+
+    print("\nOverall describe():")
+    print(stats_df[[
+        "mean_intensity",
+        "std_intensity",
+        "min_intensity",
+        "max_intensity"
+    ]].describe().to_string())
+
+    print("\nMean intensity range:")
+    print(f"min={stats_df['mean_intensity'].min():.2f}, "
+          f"max={stats_df['mean_intensity'].max():.2f}")
+
+    print("\nStd (contrast) range:")
+    print(f"min={stats_df['std_intensity'].min():.2f}, "
+          f"max={stats_df['std_intensity'].max():.2f}")
+
+    print("\nMin pixel values distribution:")
+    print(stats_df["min_intensity"].value_counts().sort_index().head(10).to_string())
+
+    print("\nMax pixel values distribution:")
+    print(stats_df["max_intensity"].value_counts().sort_index(ascending=False).head(10).to_string())
+
+def plot_intensity_stats_distribution(stats_df, save_dir):
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.hist(stats_df["mean_intensity"], bins=30)
+    plt.title("Mean Intensity per Image")
+    plt.xlabel("Mean intensity")
+    plt.ylabel("Count")
+    plt.savefig(save_dir / "mean_intensity_distribution.png")
+    plt.close()
+
+    plt.hist(stats_df["std_intensity"], bins=30)
+    plt.title("Contrast (std) per Image")
+    plt.xlabel("Std intensity")
+    plt.ylabel("Count")
+    plt.savefig(save_dir / "std_intensity_distribution.png")
+    plt.close()
+    
+def plot_intensity_by_class(df, save_dir, sample_size=300):
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    df = df[df["ok"]].copy()
+
+    for label in df["label"].unique():
+        subset = df[df["label"] == label]
+        subset = subset.sample(min(sample_size, len(subset)), random_state=42)
+
+        pixels = []
+        for path in subset["filepath"]:
+            with Image.open(path) as img:
+                arr = np.array(img.convert("L"))
+                pixels.append(arr.flatten())
+
+        pixels = np.concatenate(pixels)
+
+        plt.hist(pixels, bins=50)
+        plt.title(f"Pixel Distribution - {label}")
+        plt.xlabel("Intensity")
+        plt.ylabel("Count")
+        plt.savefig(save_dir / f"pixel_distribution_{label}.png")
+        plt.close()    
+        
+def plot_mean_vs_std(stats_df, save_dir):
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.scatter(stats_df["mean_intensity"], stats_df["std_intensity"], alpha=0.3)
+    plt.xlabel("Mean Intensity")
+    plt.ylabel("Std (Contrast)")
+    plt.title("Brightness vs Contrast per Image")
+    plt.savefig(save_dir / "mean_vs_std.png")
+    plt.close()        
+    
+def get_intensity_outliers(
+    stats_df: pd.DataFrame,
+    top_k_per_metric: int = 5,
+) -> pd.DataFrame:
+    required_cols = {
+        "filepath",
+        "mean_intensity",
+        "std_intensity",
+        "min_intensity",
+        "max_intensity",
+    }
+    missing = required_cols - set(stats_df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    outlier_frames = []
+
+    metric_specs = [
+        ("mean_intensity", "lowest_mean_intensity", True),
+        ("mean_intensity", "highest_mean_intensity", False),
+        ("std_intensity", "lowest_std_intensity", True),
+        ("std_intensity", "highest_std_intensity", False),
+        ("min_intensity", "highest_min_intensity", False),
+        ("max_intensity", "lowest_max_intensity", True),
+    ]
+
+    for metric, tag, ascending in metric_specs:
+        subset = (
+            stats_df.sort_values(metric, ascending=ascending)
+            .head(top_k_per_metric)
+            .copy()
+        )
+        subset["outlier_reason"] = tag
+        outlier_frames.append(subset)
+
+    outliers_df = pd.concat(outlier_frames, ignore_index=True)
+
+    outliers_df = outliers_df.drop_duplicates(subset=["filepath"]).reset_index(drop=True)
+
+    return outliers_df    
+    

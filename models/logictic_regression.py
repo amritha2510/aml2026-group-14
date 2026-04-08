@@ -3,7 +3,10 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import itertools
+import json
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -49,7 +52,7 @@ def get_lr_config(config: dict) -> dict:
         "pca_n_components": lr_cfg["pca_n_components"],
         "random_state": int(lr_cfg["random_state"]),
         "solver": lr_cfg["solver"],
-        "regularization_strength": float(lr_cfg["regularization_strength"]),
+        "regularization_strength": lr_cfg["regularization_strength"],
     }
 
 
@@ -80,6 +83,36 @@ def filter_model_rows(df: pd.DataFrame) -> pd.DataFrame:
     return clean_df
 
 
+def infer_actual_input_size(df: pd.DataFrame) -> dict:
+    """
+    Read the actual input size from a real preprocessed image file.
+    This is the source of truth for what the model consumed.
+    """
+    if len(df) == 0:
+        raise ValueError("Cannot infer input size from an empty DataFrame.")
+
+    sample_path = Path(df.iloc[0]["filepath"])
+    if not sample_path.exists():
+        raise FileNotFoundError(f"Cannot infer input size because file does not exist: {sample_path}")
+
+    with Image.open(sample_path) as img:
+        arr = np.array(img)
+
+    if arr.ndim != 2:
+        raise ValueError(
+            f"Expected grayscale 2D image when inferring input size, but got shape {arr.shape} "
+            f"for {sample_path}"
+        )
+
+    height, width = arr.shape
+    return {
+        "input_width": int(width),
+        "input_height": int(height),
+        "input_shape": [int(height), int(width)],
+        "n_input_features": int(height * width),
+    }
+
+
 def load_flattened_images(df: pd.DataFrame) -> np.ndarray:
     features = []
 
@@ -106,30 +139,195 @@ def encode_labels(df: pd.DataFrame) -> np.ndarray:
 
 
 def build_pipeline(lr_cfg: dict) -> Pipeline:
-    return Pipeline(
-        steps=[
-            ("scaler", StandardScaler()),
+    steps = [("scaler", StandardScaler())]
+
+    pca_n_components = lr_cfg["pca_n_components"]
+    use_pca = pca_n_components not in [None, 0, "0", "none", "None"]
+
+    if use_pca:
+        steps.append(
             (
                 "pca",
                 PCA(
-                    n_components=lr_cfg["pca_n_components"],
+                    n_components=pca_n_components,
                     random_state=lr_cfg["random_state"],
                 ),
+            )
+        )
+
+    steps.append(
+        (
+            "clf",
+            LogisticRegression(
+                C=float(lr_cfg["regularization_strength"]),
+                max_iter=lr_cfg["max_iter"],
+                class_weight=lr_cfg["class_weight"],
+                random_state=lr_cfg["random_state"],
+                solver=lr_cfg["solver"],
+                multi_class="auto",
             ),
-            (
-                "clf",
-                LogisticRegression(
-                    C=lr_cfg["regularization_strength"],
-                    max_iter=lr_cfg["max_iter"],
-                    class_weight=lr_cfg["class_weight"],
-                    random_state=lr_cfg["random_state"],
-                    solver=lr_cfg["solver"],
-                    multi_class="auto",
-                ),
-            ),
-        ]
+        )
     )
-    
+
+    return Pipeline(steps=steps)
+
+
+def get_search_space(lr_cfg: dict) -> list[dict]:
+    pca_values = lr_cfg["pca_n_components"]
+    reg_values = lr_cfg["regularization_strength"]
+
+    if not isinstance(pca_values, list):
+        pca_values = [pca_values]
+    if not isinstance(reg_values, list):
+        reg_values = [reg_values]
+
+    configs = []
+    for pca_n, reg_c in itertools.product(pca_values, reg_values):
+        cfg = lr_cfg.copy()
+        cfg["pca_n_components"] = pca_n
+        cfg["regularization_strength"] = float(reg_c)
+        configs.append(cfg)
+
+    return configs
+
+
+def save_model_selection_outputs(
+    search_results: list[dict],
+    output_dir: str | Path,
+) -> dict:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not search_results:
+        raise ValueError("No search results to save.")
+
+    results_df = pd.DataFrame(search_results).copy()
+
+    results_csv_path = output_dir / "model_selection_results.csv"
+    results_df.to_csv(results_csv_path, index=False)
+
+    ranked_df = results_df.sort_values(
+        by=["val_macro_recall", "val_macro_f1", "train_macro_recall", "pca_n_components", "regularization_strength"],
+        ascending=[False, False, False, True, True],
+    ).reset_index(drop=True)
+    ranked_df.insert(0, "rank", np.arange(1, len(ranked_df) + 1))
+
+    ranked_csv_path = output_dir / "model_selection_results_ranked.csv"
+    ranked_df.to_csv(ranked_csv_path, index=False)
+
+    best_row = ranked_df.iloc[0].to_dict()
+    best_json_path = output_dir / "best_config_from_model_selection.json"
+    with open(best_json_path, "w", encoding="utf-8") as f:
+        json.dump(best_row, f, indent=2)
+
+    if len(ranked_df) > 0:
+        plt.figure(figsize=(8, 4))
+        plt.plot(ranked_df["rank"], ranked_df["val_macro_recall"], marker="o")
+        plt.xlabel("Candidate rank")
+        plt.ylabel("Validation macro recall")
+        plt.title("Validation Macro Recall by Ranked Candidate")
+        plt.tight_layout()
+        plt.savefig(output_dir / "model_selection_rank_vs_val_macro_recall.png", dpi=200)
+        plt.close()
+
+        plt.figure(figsize=(8, 4))
+        for reg_strength in sorted(ranked_df["regularization_strength"].unique()):
+            subset = ranked_df[ranked_df["regularization_strength"] == reg_strength].sort_values("candidate_index")
+            plt.plot(
+                subset["candidate_index"],
+                subset["val_macro_recall"],
+                marker="o",
+                label=f"C={reg_strength}",
+            )
+        plt.xlabel("Candidate index")
+        plt.ylabel("Validation macro recall")
+        plt.title("Validation Macro Recall Across Candidates")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_dir / "model_selection_candidates_vs_val_macro_recall.png", dpi=200)
+        plt.close()
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(ranked_df["rank"], ranked_df["val_macro_f1"], marker="o")
+        plt.xlabel("Candidate rank")
+        plt.ylabel("Validation macro F1")
+        plt.title("Validation Macro F1 by Ranked Candidate")
+        plt.tight_layout()
+        plt.savefig(output_dir / "model_selection_rank_vs_val_macro_f1.png", dpi=200)
+        plt.close()
+
+    return {
+        "results_csv_path": str(results_csv_path),
+        "ranked_csv_path": str(ranked_csv_path),
+        "best_json_path": str(best_json_path),
+        "best_row": best_row,
+    }
+
+
+def select_best_model(
+    candidate_configs: list[dict],
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray | None,
+    y_val: np.ndarray | None,
+    evaluator: ClassificationEvaluator,
+) -> tuple[Pipeline, dict, dict, list[dict]]:
+    if X_val is None or y_val is None or len(y_val) == 0:
+        best_cfg = candidate_configs[0]
+        best_pipeline = build_pipeline(best_cfg)
+        best_pipeline.fit(X_train, y_train)
+
+        train_metrics = evaluator.evaluate_split(y_train, best_pipeline.predict(X_train), "train")
+        return best_pipeline, best_cfg, {"train": train_metrics}, []
+
+    best_pipeline = None
+    best_cfg = None
+    best_val_metrics = None
+    best_score = -np.inf
+    search_results = []
+
+    for i, cfg in enumerate(candidate_configs, start=1):
+        pca_label = cfg["pca_n_components"]
+        if pca_label in [None, 0, "0", "none", "None"]:
+            pca_label = "disabled"
+
+        print(
+            f"[INFO] Candidate {i}/{len(candidate_configs)} | "
+            f"PCA={pca_label} | C={cfg['regularization_strength']}"
+        )
+
+        pipeline = build_pipeline(cfg)
+        pipeline.fit(X_train, y_train)
+
+        train_pred = pipeline.predict(X_train)
+        val_pred = pipeline.predict(X_val)
+
+        train_metrics = evaluator.evaluate_split(y_train, train_pred, "train")
+        val_metrics = evaluator.evaluate_split(y_val, val_pred, "val")
+
+        score = val_metrics["macro_recall"]
+
+        result_row = {
+            "candidate_index": i,
+            "pca_n_components": cfg["pca_n_components"],
+            "regularization_strength": float(cfg["regularization_strength"]),
+            "train_macro_recall": float(train_metrics["macro_recall"]),
+            "train_macro_f1": float(train_metrics["macro_f1"]),
+            "val_macro_recall": float(val_metrics["macro_recall"]),
+            "val_macro_f1": float(val_metrics["macro_f1"]),
+        }
+        search_results.append(result_row)
+
+        if score > best_score:
+            best_score = score
+            best_pipeline = pipeline
+            best_cfg = cfg
+            best_val_metrics = val_metrics
+
+    final_train_metrics = evaluator.evaluate_split(y_train, best_pipeline.predict(X_train), "train")
+    return best_pipeline, best_cfg, {"train": final_train_metrics, "val": best_val_metrics}, search_results
+
+
 def save_prediction_examples(
     df: pd.DataFrame,
     y_true: np.ndarray,
@@ -180,13 +378,10 @@ def save_prediction_examples(
                 dst = wrong_dir / f"{true_name}_as_{pred_name}_{i}_{src.name}"
                 shutil.copy2(src, dst)
 
-    summary = (
-        analysis_df[["filepath", "true_label", "pred_label", "is_correct"]]
-        .copy()
-    )
+    summary = analysis_df[["filepath", "true_label", "pred_label", "is_correct"]].copy()
     summary.to_csv(output_dir / "samples" / "prediction_examples.csv", index=False)
 
-    print(f"[INFO] Saved prediction examples to: {output_dir / 'samples'}")    
+    print(f"[INFO] Saved prediction examples to: {output_dir / 'samples'}")
 
 
 def main() -> None:
@@ -216,6 +411,13 @@ def main() -> None:
     print(f"[INFO] Val rows: {len(val_df)}")
     print(f"[INFO] Test rows: {len(test_df)}")
 
+    run_metadata = infer_actual_input_size(train_df)
+    print(
+        f"[INFO] Actual model input size: "
+        f"{run_metadata['input_height']}x{run_metadata['input_width']} "
+        f"({run_metadata['n_input_features']} features)"
+    )
+
     X_train = load_flattened_images(train_df)
     y_train = encode_labels(train_df)
 
@@ -225,24 +427,62 @@ def main() -> None:
     X_test = load_flattened_images(test_df)
     y_test = encode_labels(test_df)
 
-    pipeline = build_pipeline(lr_cfg)
-    pipeline.fit(X_train, y_train)
+    if X_train.shape[1] != run_metadata["n_input_features"]:
+        raise ValueError(
+            f"Mismatch between inferred input features ({run_metadata['n_input_features']}) "
+            f"and loaded training feature width ({X_train.shape[1]})."
+        )
 
-    metrics = {
-        "train": evaluator.evaluate_split(y_train, pipeline.predict(X_train), "train"),
-        "test": evaluator.evaluate_split(y_test, pipeline.predict(X_test), "test"),
-    }
+    candidate_configs = get_search_space(lr_cfg)
 
-    if X_val is not None and y_val is not None and len(y_val) > 0:
-        metrics["val"] = evaluator.evaluate_split(y_val, pipeline.predict(X_val), "val")
+    best_pipeline, best_cfg, metrics, search_results = select_best_model(
+        candidate_configs=candidate_configs,
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        evaluator=evaluator,
+    )
 
-    pca = pipeline.named_steps["pca"]
-    clf = pipeline.named_steps["clf"]
+    selection_artifacts = {}
+    if search_results:
+        selection_output_dir = Path(output_dir) / "model_selection"
+        selection_artifacts = save_model_selection_outputs(
+            search_results=search_results,
+            output_dir=selection_output_dir,
+        )
+
+        print("\n[INFO] Top ranked validation configs:")
+        ranked_preview = (
+            pd.DataFrame(search_results)
+            .sort_values(
+                by=["val_macro_recall", "val_macro_f1", "train_macro_recall", "pca_n_components", "regularization_strength"],
+                ascending=[False, False, False, True, True],
+            )
+            .head(10)
+        )
+        print(ranked_preview.to_string(index=False))
+
+        print("\n[INFO] Best config selected from validation:")
+        print(json.dumps(selection_artifacts["best_row"], indent=2))
+    else:
+        print("[INFO] No validation split available; model selection search was skipped.")
+
+    y_test_pred = best_pipeline.predict(X_test)
+    metrics["test"] = evaluator.evaluate_split(y_test, y_test_pred, "test")
+
+    pca = best_pipeline.named_steps.get("pca")
+    clf = best_pipeline.named_steps["clf"]
 
     extra_artifacts = {
         "pca_info.json": {
-            "n_components_": int(pca.n_components_) if hasattr(pca, "n_components_") else None,
-            "explained_variance_ratio_sum": float(np.sum(pca.explained_variance_ratio_)),
+            "pca_enabled": pca is not None,
+            "n_components_": int(pca.n_components_) if pca is not None and hasattr(pca, "n_components_") else None,
+            "explained_variance_ratio_sum": (
+                float(np.sum(pca.explained_variance_ratio_))
+                if pca is not None and hasattr(pca, "explained_variance_ratio_")
+                else None
+            ),
             "classes_": [ID_TO_LABEL[int(c)] for c in clf.classes_],
         },
         "dataset_summary.json": {
@@ -253,15 +493,23 @@ def main() -> None:
         },
     }
 
+    if search_results:
+        extra_artifacts["model_selection_summary.json"] = {
+            "n_candidates": int(len(search_results)),
+            "selection_metric": "val_macro_recall",
+            "best_candidate": selection_artifacts["best_row"],
+            "results_csv_path": selection_artifacts["results_csv_path"],
+            "ranked_csv_path": selection_artifacts["ranked_csv_path"],
+        }
+
     run_dir = evaluator.save_run(
         base_output_dir=output_dir,
-        config=lr_cfg,
+        config=best_cfg,
         metrics_by_split=metrics,
-        experiment_name=lr_cfg["experiment_name"],
+        experiment_name=best_cfg["experiment_name"],
         extra_artifacts=extra_artifacts,
+        run_metadata=run_metadata,
     )
-    
-    y_test_pred = pipeline.predict(X_test)
 
     save_prediction_examples(
         df=test_df,
@@ -272,7 +520,7 @@ def main() -> None:
         n_wrong_per_pair=5,
     )
 
-    joblib.dump(pipeline, run_dir / "logistic_regression_pipeline.joblib")
+    joblib.dump(best_pipeline, run_dir / "logistic_regression_pipeline.joblib")
 
     print(f"\n[INFO] Saved run to: {run_dir.resolve()}")
 

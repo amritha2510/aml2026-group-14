@@ -19,3 +19,13 @@ logistic_regression:
   random_state: 42
   solver: lbfgs
   regularization_strength: [0.1, 1.0, 10.0]
+
+deep_learning:
+  output_dir: ./outputs/deep_learning
+  experiment_name: dual_branch_baseline
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.001
+  weight_decay: 1e-4
+  noise_dropout_rate: 0.4
+  random_state: 42

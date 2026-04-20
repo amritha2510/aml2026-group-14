@@ -29,3 +29,23 @@ deep_learning:
   weight_decay: 1e-4
   noise_dropout_rate: 0.4
   random_state: 42
+
+vit:
+  output_dir: ./outputs/vit
+  experiment_name: vit_baseline
+  model_name: vit_tiny_patch16_224
+  pretrained: true
+  num_classes: 3
+  image_size: 224
+  batch_size: 32
+  epochs: 20
+  lr: 1.0e-4
+  weight_decay: 0.01
+  freeze_backbone: false
+  unfreeze_at_epoch: 5        
+  use_class_weights: true
+  dropout: 0.1
+  label_smoothing: 0.1
+  patience: 5                 
+  num_workers: 2
+  preserve_aspect_ratio: true   

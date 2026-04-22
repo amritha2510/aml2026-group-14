@@ -30,6 +30,21 @@ deep_learning:
   noise_dropout_rate: 0.4
   random_state: 42
 
+cnn:
+  output_dir: ./outputs/cnn
+  experiment_name: densenet121_baseline
+  model_name: densenet121
+  pretrained: true
+  num_classes: 3
+  image_size: 128
+  batch_size: 32
+  epochs: 20
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  use_class_weights: true
+  freeze_backbone: false
+  num_workers: 2
+
 vit:
   output_dir: ./outputs/vit
   experiment_name: vit_baseline

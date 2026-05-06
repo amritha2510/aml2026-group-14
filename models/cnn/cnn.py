@@ -20,8 +20,3 @@ class DenseNet121Baseline(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-    
-
-# train_dataset = ChestXrayCNNDataset(train_df, split="train")
-# val_dataset = ChestXrayCNNDataset(val_df, split="val")
-# test_dataset = ChestXrayCNNDataset(test_df, split="test")

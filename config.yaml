@@ -1,4 +1,4 @@
-data_root: ./chest_xray
+data_root: ../input-switchdrive
 metadata_output_path: ./outputs/metadata/metadata.csv
 analysis_output_dir: ./outputs/data_analysis
 preprocessed_output_root: ./outputs/preprocessed/chest_xray_grayscale
@@ -43,7 +43,7 @@ cnn:
   weight_decay: 1e-4
   use_class_weights: true
   freeze_backbone: false
-  num_workers: 2
+  num_workers: 6
 
 vit:
   output_dir: ./outputs/vit

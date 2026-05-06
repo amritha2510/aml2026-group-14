@@ -89,8 +89,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=cnn_cfg["batch_size"], num_workers=2)
     test_loader = DataLoader(test_dataset, batch_size=cnn_cfg["batch_size"], num_workers=2)
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = DenseNet121Baseline(
         num_classes=cnn_cfg["num_classes"],
@@ -111,6 +110,7 @@ def main():
 
     evaluator = ClassificationEvaluator(model_name="cnn_densenet121")
 
+    best_val_metrics = None
     best_val_recall = -1
     best_model_path = Path(cnn_cfg["output_dir"]) / "best_model.pth"
     best_model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,6 +126,7 @@ def main():
         # save best model (based on recall)
         if val_metrics["macro_recall"] > best_val_recall:
             best_val_recall = val_metrics["macro_recall"]
+            best_val_metrics = val_metrics
             torch.save(model.state_dict(), best_model_path)
 
     # final test evaluation
@@ -134,9 +135,31 @@ def main():
     y_test, y_pred = evaluate(model, test_loader, device)
     test_metrics = evaluator.evaluate_split(y_test, y_pred, "test")
 
+    metrics_by_split = {
+        "val": best_val_metrics,
+        "test": test_metrics,
+    }
+
+    extra_artifacts = {
+        "model_name": "cnn_densenet121",
+        "num_epochs": cnn_cfg["epochs"],
+        "batch_size": cnn_cfg["batch_size"],
+    }
+    
+    output_dir = Path(cnn_cfg["output_dir"])
+    run_dir = evaluator.save_run(
+        base_output_dir=output_dir,
+        config=cnn_cfg,
+        metrics_by_split=metrics_by_split,
+        experiment_name=cnn_cfg.get("experiment_name", "cnn_densenet121"),
+        extra_artifacts=extra_artifacts,
+    )
+
     print("\n[FINAL TEST METRICS]")
     print(test_metrics)
 
+    print(f"\n[INFO] Run saved to: {run_dir.resolve()}")
+    print(f"[INFO] Best val macro recall: {best_val_recall:.4f}")
 
 if __name__ == "__main__":
     main()

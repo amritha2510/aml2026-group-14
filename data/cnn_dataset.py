@@ -33,7 +33,7 @@ class ChestXrayCNNDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        img = Image.open(row["original_filepath"]).convert("L")
+        img = Image.open(row["filepath"]).convert("L")
         label = LABEL_TO_ID[row["label"]]
         img = self.transform(img)
         return img, label

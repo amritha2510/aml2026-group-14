@@ -9,7 +9,6 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from PIL import Image
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -17,6 +16,11 @@ from sklearn.preprocessing import StandardScaler
 
 from constants import ID_TO_LABEL, LABEL_TO_ID
 from data.data_reader import get_required_config_path, load_config, load_metadata
+from data.image_transforms import (
+    augment_flattened_rgb_training_data,
+    get_image_aug_config,
+    load_image_as_rgb_array,
+)
 from evaluation.metrics import ClassificationEvaluator
 
 
@@ -84,10 +88,6 @@ def filter_model_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def infer_actual_input_size(df: pd.DataFrame) -> dict:
-    """
-    Read the actual input size from a real preprocessed image file.
-    This is the source of truth for what the model consumed.
-    """
     if len(df) == 0:
         raise ValueError("Cannot infer input size from an empty DataFrame.")
 
@@ -95,21 +95,22 @@ def infer_actual_input_size(df: pd.DataFrame) -> dict:
     if not sample_path.exists():
         raise FileNotFoundError(f"Cannot infer input size because file does not exist: {sample_path}")
 
-    with Image.open(sample_path) as img:
-        arr = np.array(img)
+    arr = load_image_as_rgb_array(str(sample_path), normalize=False)
 
-    if arr.ndim != 2:
+    if arr.ndim != 3 or arr.shape[2] != 3:
         raise ValueError(
-            f"Expected grayscale 2D image when inferring input size, but got shape {arr.shape} "
+            f"Expected RGB image with shape HxWx3, but got shape {arr.shape} "
             f"for {sample_path}"
         )
 
-    height, width = arr.shape
+    height, width, channels = arr.shape
+
     return {
         "input_width": int(width),
         "input_height": int(height),
-        "input_shape": [int(height), int(width)],
-        "n_input_features": int(height * width),
+        "input_channels": int(channels),
+        "input_shape": [int(height), int(width), int(channels)],
+        "n_input_features": int(height * width * channels),
     }
 
 
@@ -117,16 +118,12 @@ def load_flattened_images(df: pd.DataFrame) -> np.ndarray:
     features = []
 
     for i, path in enumerate(df["filepath"].tolist()):
-        with Image.open(path) as img:
-            arr = np.array(img, dtype=np.float32)
+        arr = load_image_as_rgb_array(path, normalize=True)
 
-            if arr.ndim != 2:
-                raise ValueError(
-                    f"Expected preprocessed grayscale image, but got shape {arr.shape} for {path}"
-                )
+        if arr.ndim != 3 or arr.shape[2] != 3:
+            raise ValueError(f"Expected RGB image with shape HxWx3, got {arr.shape} for {path}")
 
-            arr = arr / 255.0
-            features.append(arr.flatten())
+        features.append(arr.flatten())
 
         if (i + 1) % 500 == 0 or (i + 1) == len(df):
             print(f"[INFO] Loaded {i + 1}/{len(df)} images")
@@ -207,9 +204,16 @@ def save_model_selection_outputs(
     results_df.to_csv(results_csv_path, index=False)
 
     ranked_df = results_df.sort_values(
-        by=["val_macro_recall", "val_macro_f1", "train_macro_recall", "pca_n_components", "regularization_strength"],
+        by=[
+            "val_macro_recall",
+            "val_macro_f1",
+            "train_macro_recall",
+            "pca_n_components",
+            "regularization_strength",
+        ],
         ascending=[False, False, False, True, True],
     ).reset_index(drop=True)
+
     ranked_df.insert(0, "rank", np.arange(1, len(ranked_df) + 1))
 
     ranked_csv_path = output_dir / "model_selection_results_ranked.csv"
@@ -217,44 +221,48 @@ def save_model_selection_outputs(
 
     best_row = ranked_df.iloc[0].to_dict()
     best_json_path = output_dir / "best_config_from_model_selection.json"
+
     with open(best_json_path, "w", encoding="utf-8") as f:
         json.dump(best_row, f, indent=2)
 
-    if len(ranked_df) > 0:
-        plt.figure(figsize=(8, 4))
-        plt.plot(ranked_df["rank"], ranked_df["val_macro_recall"], marker="o")
-        plt.xlabel("Candidate rank")
-        plt.ylabel("Validation macro recall")
-        plt.title("Validation Macro Recall by Ranked Candidate")
-        plt.tight_layout()
-        plt.savefig(output_dir / "model_selection_rank_vs_val_macro_recall.png", dpi=200)
-        plt.close()
+    plt.figure(figsize=(8, 4))
+    plt.plot(ranked_df["rank"], ranked_df["val_macro_recall"], marker="o")
+    plt.xlabel("Candidate rank")
+    plt.ylabel("Validation macro recall")
+    plt.title("Validation Macro Recall by Ranked Candidate")
+    plt.tight_layout()
+    plt.savefig(output_dir / "model_selection_rank_vs_val_macro_recall.png", dpi=200)
+    plt.close()
 
-        plt.figure(figsize=(8, 4))
-        for reg_strength in sorted(ranked_df["regularization_strength"].unique()):
-            subset = ranked_df[ranked_df["regularization_strength"] == reg_strength].sort_values("candidate_index")
-            plt.plot(
-                subset["candidate_index"],
-                subset["val_macro_recall"],
-                marker="o",
-                label=f"C={reg_strength}",
-            )
-        plt.xlabel("Candidate index")
-        plt.ylabel("Validation macro recall")
-        plt.title("Validation Macro Recall Across Candidates")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(output_dir / "model_selection_candidates_vs_val_macro_recall.png", dpi=200)
-        plt.close()
+    plt.figure(figsize=(8, 4))
+    for reg_strength in sorted(ranked_df["regularization_strength"].unique()):
+        subset = ranked_df[
+            ranked_df["regularization_strength"] == reg_strength
+        ].sort_values("candidate_index")
 
-        plt.figure(figsize=(8, 4))
-        plt.plot(ranked_df["rank"], ranked_df["val_macro_f1"], marker="o")
-        plt.xlabel("Candidate rank")
-        plt.ylabel("Validation macro F1")
-        plt.title("Validation Macro F1 by Ranked Candidate")
-        plt.tight_layout()
-        plt.savefig(output_dir / "model_selection_rank_vs_val_macro_f1.png", dpi=200)
-        plt.close()
+        plt.plot(
+            subset["candidate_index"],
+            subset["val_macro_recall"],
+            marker="o",
+            label=f"C={reg_strength}",
+        )
+
+    plt.xlabel("Candidate index")
+    plt.ylabel("Validation macro recall")
+    plt.title("Validation Macro Recall Across Candidates")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_dir / "model_selection_candidates_vs_val_macro_recall.png", dpi=200)
+    plt.close()
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(ranked_df["rank"], ranked_df["val_macro_f1"], marker="o")
+    plt.xlabel("Candidate rank")
+    plt.ylabel("Validation macro F1")
+    plt.title("Validation Macro F1 by Ranked Candidate")
+    plt.tight_layout()
+    plt.savefig(output_dir / "model_selection_rank_vs_val_macro_f1.png", dpi=200)
+    plt.close()
 
     return {
         "results_csv_path": str(results_csv_path),
@@ -277,7 +285,12 @@ def select_best_model(
         best_pipeline = build_pipeline(best_cfg)
         best_pipeline.fit(X_train, y_train)
 
-        train_metrics = evaluator.evaluate_split(y_train, best_pipeline.predict(X_train), "train")
+        train_metrics = evaluator.evaluate_split(
+            y_train,
+            best_pipeline.predict(X_train),
+            "train",
+        )
+
         return best_pipeline, best_cfg, {"train": train_metrics}, []
 
     best_pipeline = None
@@ -316,6 +329,7 @@ def select_best_model(
             "val_macro_recall": float(val_metrics["macro_recall"]),
             "val_macro_f1": float(val_metrics["macro_f1"]),
         }
+
         search_results.append(result_row)
 
         if score > best_score:
@@ -324,7 +338,12 @@ def select_best_model(
             best_cfg = cfg
             best_val_metrics = val_metrics
 
-    final_train_metrics = evaluator.evaluate_split(y_train, best_pipeline.predict(X_train), "train")
+    final_train_metrics = evaluator.evaluate_split(
+        y_train,
+        best_pipeline.predict(X_train),
+        "train",
+    )
+
     return best_pipeline, best_cfg, {"train": final_train_metrics, "val": best_val_metrics}, search_results
 
 
@@ -354,7 +373,7 @@ def save_prediction_examples(
 
     for class_id, class_name in ID_TO_LABEL.items():
         class_correct = analysis_df[
-            (analysis_df["y_true"] == class_id) & (analysis_df["is_correct"])
+            (analysis_df["y_true"] == class_id) & analysis_df["is_correct"]
         ].head(n_correct_per_class)
 
         for i, row in enumerate(class_correct.itertuples(index=False), start=1):
@@ -387,6 +406,8 @@ def save_prediction_examples(
 def main() -> None:
     config = load_config(CONFIG_PATH)
     lr_cfg = get_lr_config(config)
+    aug_cfg = get_image_aug_config(config, model_key="logistic_regression")
+
     evaluator = ClassificationEvaluator(model_name="logistic_regression")
 
     output_dir = get_required_config_path(
@@ -407,14 +428,16 @@ def main() -> None:
     if len(test_df) == 0:
         raise ValueError("Test split contains no usable rows.")
 
-    print(f"[INFO] Train rows: {len(train_df)}")
+    print(f"[INFO] Train rows before augmentation: {len(train_df)}")
     print(f"[INFO] Val rows: {len(val_df)}")
     print(f"[INFO] Test rows: {len(test_df)}")
 
     run_metadata = infer_actual_input_size(train_df)
+
     print(
         f"[INFO] Actual model input size: "
-        f"{run_metadata['input_height']}x{run_metadata['input_width']} "
+        f"{run_metadata['input_height']}x{run_metadata['input_width']}x"
+        f"{run_metadata['input_channels']} "
         f"({run_metadata['n_input_features']} features)"
     )
 
@@ -433,6 +456,16 @@ def main() -> None:
             f"and loaded training feature width ({X_train.shape[1]})."
         )
 
+    X_train, y_train = augment_flattened_rgb_training_data(
+        X=X_train,
+        y=y_train,
+        input_shape=run_metadata["input_shape"],
+        aug_cfg=aug_cfg,
+        random_state=lr_cfg["random_state"],
+    )
+
+    print(f"[INFO] Train rows after augmentation: {len(y_train)}")
+
     candidate_configs = get_search_space(lr_cfg)
 
     best_pipeline, best_cfg, metrics, search_results = select_best_model(
@@ -445,6 +478,7 @@ def main() -> None:
     )
 
     selection_artifacts = {}
+
     if search_results:
         selection_output_dir = Path(output_dir) / "model_selection"
         selection_artifacts = save_model_selection_outputs(
@@ -456,11 +490,18 @@ def main() -> None:
         ranked_preview = (
             pd.DataFrame(search_results)
             .sort_values(
-                by=["val_macro_recall", "val_macro_f1", "train_macro_recall", "pca_n_components", "regularization_strength"],
+                by=[
+                    "val_macro_recall",
+                    "val_macro_f1",
+                    "train_macro_recall",
+                    "pca_n_components",
+                    "regularization_strength",
+                ],
                 ascending=[False, False, False, True, True],
             )
             .head(10)
         )
+
         print(ranked_preview.to_string(index=False))
 
         print("\n[INFO] Best config selected from validation:")
@@ -477,7 +518,11 @@ def main() -> None:
     extra_artifacts = {
         "pca_info.json": {
             "pca_enabled": pca is not None,
-            "n_components_": int(pca.n_components_) if pca is not None and hasattr(pca, "n_components_") else None,
+            "n_components_": (
+                int(pca.n_components_)
+                if pca is not None and hasattr(pca, "n_components_")
+                else None
+            ),
             "explained_variance_ratio_sum": (
                 float(np.sum(pca.explained_variance_ratio_))
                 if pca is not None and hasattr(pca, "explained_variance_ratio_")
@@ -486,10 +531,12 @@ def main() -> None:
             "classes_": [ID_TO_LABEL[int(c)] for c in clf.classes_],
         },
         "dataset_summary.json": {
-            "n_train": int(len(train_df)),
+            "n_train_before_augmentation": int(len(train_df)),
+            "n_train_after_augmentation": int(len(y_train)),
             "n_val": int(len(val_df)),
             "n_test": int(len(test_df)),
             "labels": LABEL_TO_ID,
+            "data_augmentation": aug_cfg,
         },
     }
 

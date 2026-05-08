@@ -1,0 +1,31 @@
+data_root: /home/renku/work/input-switchdrive/chest_xray
+metadata_output_path: outputs/metadata/metadata.csv
+analysis_output_dir: outputs/data_analysis
+preprocessed_output_root: outputs/preprocessed/chest_xray_grayscale
+preprocessed_metadata_output_path: outputs/preprocessed/preprocessed_metadata.csv
+
+preprocessing:
+  grayscale: true
+  resize:
+    enabled: true
+    size: [128, 128]
+
+data_augmentation:
+  enabled: true
+  probability: 0.5
+  rotation_degrees: 10
+  translate_pixels: 3
+  noise_std: 0.02
+  brightness_delta: 0.10
+
+logistic_regression:
+  data_augmentation:
+    enabled: true    
+  output_dir: ./outputs/logistic_regression
+  experiment_name: logistic_regression
+  max_iter: 1000
+  class_weight: balanced
+  pca_n_components: [0.80, 0.85, 0.90, 0.95]
+  random_state: 42
+  solver: lbfgs
+  regularization_strength: [0.1, 1.0, 10.0]

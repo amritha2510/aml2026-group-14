@@ -12,7 +12,7 @@ preprocessing:
 
 data_augmentation:
   enabled: true
-  copies_per_image: 1
+  probability: 0.5
   rotation_degrees: 10
   translate_pixels: 3
   noise_std: 0.02

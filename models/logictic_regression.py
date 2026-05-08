@@ -24,7 +24,7 @@ from data.image_transforms import (
 from evaluation.metrics import ClassificationEvaluator
 
 
-CONFIG_PATH = Path("config.yaml")
+CONFIG_PATH = Path("/home/renku/work/aml2026-group-14/config.yaml")
 
 
 def get_lr_config(config: dict) -> dict:
@@ -161,7 +161,7 @@ def build_pipeline(lr_cfg: dict) -> Pipeline:
                 class_weight=lr_cfg["class_weight"],
                 random_state=lr_cfg["random_state"],
                 solver=lr_cfg["solver"],
-                multi_class="auto",
+                # multi_class="auto",
             ),
         )
     )

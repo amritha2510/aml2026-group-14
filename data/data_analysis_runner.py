@@ -32,7 +32,7 @@ from data_reader import (
 )
 
 
-CONFIG_PATH = Path("config.yaml")
+CONFIG_PATH = Path("/home/renku/work/aml2026-group-14/config.yaml")
 USE_SAVED_METADATA = False
 
 

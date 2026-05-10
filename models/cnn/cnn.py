@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torchvision.models as models
-from data.cnn_dataset import ChestXrayCNNDataset
+from data.cnn_dataset import CNNDataset
 from torchvision.models import densenet121, DenseNet121_Weights
 
 class DenseNet121Baseline(nn.Module):

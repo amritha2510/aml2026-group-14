@@ -264,5 +264,3 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print(f"\n[ERROR] Dataset not found at {TRAIN_DIR} or {VAL_DIR}.")
         print("Please ensure your Kaggle dataset is unzipped into a 'data/chest_xray/' folder.")
-
-

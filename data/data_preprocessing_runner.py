@@ -2,8 +2,8 @@ import argparse
 from pathlib import Path
 import os
 
-from data_preprocessing import preprocess_dataset, save_preprocessed_metadata
-from data_reader import (
+from data.data_preprocessing import preprocess_dataset, save_preprocessed_metadata
+from data.data_reader import (
     ChestXrayDataReader,
     get_preprocessing_grayscale,
     get_preprocessing_resize,

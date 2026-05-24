@@ -49,7 +49,7 @@ cnn:
   model_name: densenet121
   pretrained: true
   num_classes: 3
-  image_size: 128
+  image_size: 224
   batch_size: 16
   epochs: 20
   learning_rate: 0.001

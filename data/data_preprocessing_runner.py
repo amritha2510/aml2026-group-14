@@ -1,4 +1,6 @@
+import argparse
 from pathlib import Path
+import os
 
 from data_preprocessing import preprocess_dataset, save_preprocessed_metadata
 from data_reader import (
@@ -11,8 +13,17 @@ from data_reader import (
     save_metadata,
 )
 
+base_dir = Path(__file__).resolve().parents[1]
+print(f"Running data preprocessing from: {base_dir}")
 
-CONFIG_PATH = Path("/home/renku/work/aml2026-group-14/config.yaml")
+_parser = argparse.ArgumentParser(description="Preprocess chest X-ray dataset")
+_parser.add_argument(
+    "--config", "-c",
+    default=str(base_dir / "config.yaml"),
+    help="Path to YAML config file (default: config.yaml)",
+)
+_args, _ = _parser.parse_known_args()
+CONFIG_PATH = _args.config
 USE_SAVED_METADATA = True
 
 

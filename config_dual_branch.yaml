@@ -1,0 +1,29 @@
+data_root: chest_xray
+metadata_output_path: outputs/metadata/metadata.csv
+analysis_output_dir: outputs/data_analysis
+preprocessed_output_root: outputs/preprocessed/chest_xray_224
+preprocessed_metadata_output_path: outputs/preprocessed/preprocessed_metadata_224.csv
+
+preprocessing:
+  grayscale: false
+  resize:
+    enabled: true
+    size: [224, 224]
+
+data_augmentation:
+  enabled: true
+  probability: 0.5
+  rotation_degrees: 10
+  translate_pixels: 3
+  noise_std: 0.02
+  brightness_delta: 0.10
+
+deep_learning:
+  output_dir: ./outputs/deep_learning
+  experiment_name: dual_branch_baseline
+  batch_size: 64
+  epochs: 20
+  learning_rate: 0.001
+  weight_decay: 1e-4
+  noise_dropout_rate: 0.4
+  random_state: 42

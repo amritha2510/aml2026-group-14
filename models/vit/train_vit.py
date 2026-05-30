@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from constants import LABEL_TO_ID, ID_TO_LABEL
+from constants import LABEL_TO_ID
 from data.data_reader import get_required_config_path, load_config, load_metadata
 from evaluation.metrics import ClassificationEvaluator
 
@@ -35,7 +35,7 @@ def compute_class_weights_tensor(metadata_df, device):
     ]
     counts = train_df["label"].value_counts()
     total = counts.sum()
-    n_classes = len(counts)
+    n_classes = len(LABEL_TO_ID)
 
     weights = torch.zeros(n_classes)
     for label_str, count in counts.items():
@@ -104,6 +104,23 @@ def evaluate_epoch(model, loader, criterion, device):
     return running_loss / n, np.array(all_labels), np.array(all_preds)
 
 
+@torch.no_grad()
+def evaluate_with_tta(model, loader, device):
+    """Average logits over original + horizontal flip for a free boost at inference."""
+    model.eval()
+    all_preds, all_labels = [], []
+
+    for imgs, labels in loader:
+        imgs = imgs.to(device)
+        logits_orig = model(imgs)
+        logits_flip = model(torch.flip(imgs, dims=[3]))
+        avg_logits = (logits_orig + logits_flip) / 2
+        all_preds.extend(avg_logits.argmax(dim=1).cpu().numpy())
+        all_labels.extend(labels.numpy())
+
+    return np.array(all_labels), np.array(all_preds)
+
+
 # ── main ─────────────────────────────────────────────────
 
 def main():
@@ -111,14 +128,11 @@ def main():
     vit_cfg = get_vit_config(config)
     evaluator = ClassificationEvaluator(model_name="vit")
 
-    # Read RAW metadata (not preprocessed — ViT does its own transforms)
-    metadata_path = get_required_config_path(config, CONFIG_PATH, "metadata_output_path")
+    # Use preprocessed metadata (grayscale 128×128) for fair comparison with CNN and DualBranch
+    metadata_path = get_required_config_path(config, CONFIG_PATH, "preprocessed_metadata_output_path")
     metadata_df = load_metadata(metadata_path)
     metadata_df = filter_model_rows(metadata_df)
 
-    from data.split_utils import fix_val_split
-    metadata_df = fix_val_split(metadata_df)
-    
     print(f"[ViT] Dataset splits:")
     print(metadata_df.groupby(["split", "label"]).size())
 
@@ -129,7 +143,6 @@ def main():
     batch_size = vit_cfg.get("batch_size", 32)
     num_workers = vit_cfg.get("num_workers", 2)
     epochs = vit_cfg.get("epochs", 20)
-    patience = vit_cfg.get("patience", 5)
 
     # Datasets & loaders
     preserve_ar = vit_cfg.get("preserve_aspect_ratio", False)
@@ -170,15 +183,23 @@ def main():
         lr=vit_cfg.get("lr", 1e-4),
         weight_decay=vit_cfg.get("weight_decay", 0.01),
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    warmup_epochs = vit_cfg.get("warmup_epochs", 3)
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+    )
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs - warmup_epochs
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
+    )
 
     # Output dir
     output_dir = Path(vit_cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Training loop ──
-    best_val_recall = 0.0
-    no_improve = 0
+    best_train_loss = float("inf")
     history = []
     unfreeze_at = vit_cfg.get("unfreeze_at_epoch", None)
 
@@ -191,15 +212,16 @@ def main():
         if unfreeze_at and epoch == unfreeze_at and vit_cfg.get("freeze_backbone", False):
             for param in model.parameters():
                 param.requires_grad = True
+            backbone_lr = vit_cfg.get("lr", 1e-4) * 0.1
             optimizer = torch.optim.AdamW(
                 model.parameters(),
-                lr=vit_cfg.get("lr", 1e-4) * 0.1,
+                lr=backbone_lr,
                 weight_decay=vit_cfg.get("weight_decay", 0.01),
             )
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, T_max=epochs - epoch
             )
-            print(f"[ViT] Epoch {epoch}: unfroze all layers, LR → {vit_cfg.get('lr', 1e-4) * 0.1}")
+            print(f"[ViT] Epoch {epoch}: unfroze all layers, LR → {backbone_lr:.2e}")
 
         train_loss, train_y, train_pred = train_one_epoch(
             model, train_loader, criterion, optimizer, device
@@ -227,25 +249,26 @@ def main():
             "val_loss": val_loss, "val_recall": val_recall, "val_f1": val_f1,
         })
 
-        # Best model tracking + early stopping
-        if val_recall > best_val_recall:
-            best_val_recall = val_recall
-            no_improve = 0
+        # Save best model by train loss (val set too small for model selection)
+        if train_loss < best_train_loss:
+            best_train_loss = train_loss
             torch.save(model.state_dict(), output_dir / "best_model.pt")
-            print(f"  → Saved best model (val recall={val_recall:.4f})")
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                print(f"[ViT] Early stopping at epoch {epoch}")
-                break
+            print(f"  → Saved best model (train loss={train_loss:.4f})")
 
     # ── Final evaluation using ClassificationEvaluator ──
     # Load best model for test evaluation
     model.load_state_dict(torch.load(output_dir / "best_model.pt", weights_only=True))
 
-    _, test_y, test_pred = evaluate_epoch(model, test_loader, criterion, device)
-    _, train_y_final, train_pred_final = evaluate_epoch(model, train_loader, criterion, device)
-    _, val_y_final, val_pred_final = evaluate_epoch(model, val_loader, criterion, device)
+    use_tta = vit_cfg.get("use_tta", False)
+    if use_tta:
+        print("[ViT] Running final evaluation with TTA (orig + h-flip)...")
+        test_y, test_pred = evaluate_with_tta(model, test_loader, device)
+        train_y_final, train_pred_final = evaluate_with_tta(model, train_loader, device)
+        val_y_final, val_pred_final = evaluate_with_tta(model, val_loader, device)
+    else:
+        _, test_y, test_pred = evaluate_epoch(model, test_loader, criterion, device)
+        _, train_y_final, train_pred_final = evaluate_epoch(model, train_loader, criterion, device)
+        _, val_y_final, val_pred_final = evaluate_epoch(model, val_loader, criterion, device)
 
     # Use ClassificationEvaluator — same as logistic_regression.py
     metrics_by_split = {
@@ -276,7 +299,7 @@ def main():
     torch.save(model.state_dict(), run_dir / "best_model.pt")
 
     print(f"\n[INFO] Run saved to: {run_dir.resolve()}")
-    print(f"[INFO] Best val macro recall: {best_val_recall:.4f}")
+    print(f"[INFO] Best train loss: {best_train_loss:.4f}")
 
 
 if __name__ == "__main__":

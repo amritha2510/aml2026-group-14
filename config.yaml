@@ -1,14 +1,14 @@
 data_root: ../input-switchdrive
 metadata_output_path: ./outputs/metadata/metadata.csv
 analysis_output_dir: ./outputs/data_analysis
-preprocessed_output_root: ./outputs/preprocessed/chest_xray_grayscale
-preprocessed_metadata_output_path: ./outputs/preprocessed/preprocessed_metadata.csv
+preprocessed_output_root: ./outputs/preprocessed/chest_xray_224
+preprocessed_metadata_output_path: ./outputs/preprocessed/preprocessed_metadata_224.csv
 
 preprocessing:
-  grayscale: true
+  grayscale: false
   resize:
     enabled: true
-    size: [128, 128]
+    size: [224, 224]
 
 data_augmentation:
   enabled: true
@@ -42,7 +42,7 @@ deep_learning:
 
 cnn:
   data_augmentation:
-    enabled: true  
+    enabled: true
   random_state: 42
   output_dir: ./outputs/cnn
   experiment_name: densenet121_baseline
@@ -60,20 +60,21 @@ cnn:
 
 vit:
   output_dir: ./outputs/vit
-  experiment_name: vit_baseline
+  experiment_name: vit_224_rgb_tuned
   model_name: vit_tiny_patch16_224
   pretrained: true
   num_classes: 3
   image_size: 224
   batch_size: 32
   epochs: 20
-  lr: 1.0e-4
+  lr: 5.0e-5
   weight_decay: 0.01
+  warmup_epochs: 3
   freeze_backbone: false
-  unfreeze_at_epoch: 5        
+  unfreeze_at_epoch: 5
   use_class_weights: true
-  dropout: 0.1
+  dropout: 0.2
   label_smoothing: 0.1
-  patience: 5                 
+  use_tta: true
   num_workers: 2
-  preserve_aspect_ratio: true   
+  preserve_aspect_ratio: false

@@ -5,3 +5,6 @@ pillow
 PyYAML
 scikit-learn
 joblib
+torch
+torchvision
+timm

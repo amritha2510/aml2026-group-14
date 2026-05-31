@@ -1,14 +1,14 @@
 data_root: ../input-switchdrive
 metadata_output_path: ./outputs/metadata/metadata.csv
 analysis_output_dir: ./outputs/data_analysis
-preprocessed_output_root: ./outputs/preprocessed/chest_xray_grayscale
-preprocessed_metadata_output_path: ./outputs/preprocessed/preprocessed_metadata.csv
+preprocessed_output_root: ./outputs/preprocessed/chest_xray_224
+preprocessed_metadata_output_path: ./outputs/preprocessed/preprocessed_metadata_224.csv
 
 preprocessing:
   grayscale: true
   resize:
     enabled: true
-    size: [128, 128]
+    size: [224, 224]
 
 data_augmentation:
   enabled: true
@@ -49,7 +49,7 @@ cnn:
   model_name: densenet121
   pretrained: true
   num_classes: 3
-  image_size: 128
+  image_size: 224
   batch_size: 16
   epochs: 20
   learning_rate: 0.001
@@ -76,4 +76,20 @@ vit:
   label_smoothing: 0.1
   patience: 5                 
   num_workers: 2
-  preserve_aspect_ratio: true   
+  preserve_aspect_ratio: true
+
+dual_conv_vit:
+  output_dir: ./outputs/dual_conv_vit
+  experiment_name: dual_conv_vit_baseline
+  num_classes: 3
+  batch_size: 32
+  epochs: 20
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  noise_dropout_rates: 0.4
+  fusion_types: [concat, attention]
+  label_smoothing: 0.1
+  random_state: 42
+  num_workers: 4
+  freeze_epochs: 5
+  normal_boost_multiplier: 1.5

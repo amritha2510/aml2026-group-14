@@ -81,7 +81,6 @@ dual_conv_vit:
   noise_dropout_rates: 0.4
   fusion_types: [concat, attention]
   label_smoothing: 0.0
-  use_tta: false
   random_state: 42
   num_workers: 4
   freeze_epochs: 5

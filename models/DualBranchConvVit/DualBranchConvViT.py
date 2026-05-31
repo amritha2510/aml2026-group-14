@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
 import torchvision.models as models
 import timm
 from PIL import Image
@@ -55,18 +54,6 @@ class PreprocessedChestXrayDataset(Dataset):
 
 
 class CrossAttentionFusion(nn.Module):
-    """
-    Real cross-attention between the two branches.
-
-    The ViT tokens are the GLOBAL CANVAS: they describe the overall chest /
-    lung structure. They are used as queries. The CNN's spatial feature-map
-    tokens carry LOCAL TEXTURE (the fine-grained opacity patterns). They are
-    the keys/values. Each global token therefore *pulls in* the local detail
-    that is relevant to it — this is the "paint local texture onto the global
-    canvas" idea, now done over real spatial positions instead of two pooled
-    vectors. We then mean-pool over the (locally-informed) ViT token axis to
-    get a single descriptor for the classifier.
-    """
 
     def __init__(self, embed_dim=256, num_heads=4, dropout=0.1):
         super().__init__()
@@ -120,13 +107,10 @@ class DualBranchConvViT(nn.Module):
         self.cnn_proj = nn.Linear(cnn_dim, embed_dim)
         self.vit_proj = nn.Linear(vit_dim, embed_dim)
 
-        # Learnable positional embedding for the CNN spatial tokens so the
-        # fusion knows *where* each local texture lives.
         self.cnn_pos = nn.Parameter(torch.zeros(1, num_cnn_tokens, embed_dim))
         nn.init.trunc_normal_(self.cnn_pos, std=0.02)
 
-        # Embedding-level noise on the ViT branch before fusion (heavy dropout
-        # regularizer — forces reliance on both branches).
+
         self.noise_injection = nn.Dropout(p=noise_dropout_rates)
 
         if fusion_type == "attention":
@@ -163,15 +147,7 @@ class DualBranchConvViT(nn.Module):
 
 
 def resolve_freeze_epochs(dl_cfg: dict, epochs: int) -> int:
-    """
-    Freeze schedule that is *consistent across run lengths*.
 
-    Prefer `freeze_frac` (fraction of total epochs) so the short search runs
-    and the long final runs both go through the same freeze->unfreeze
-    transition. A fixed `freeze_epochs` is still honoured for back-compat, but
-    is clamped to `epochs - 1` so the unfreeze ALWAYS fires (the old default of
-    5 with a 5-epoch search meant the backbones never unfroze during search).
-    """
     if "freeze_frac" in dl_cfg:
         freeze = max(1, round(dl_cfg["freeze_frac"] * epochs))
     else:
@@ -179,23 +155,6 @@ def resolve_freeze_epochs(dl_cfg: dict, epochs: int) -> int:
     return max(0, min(freeze, epochs - 1))
 
 
-@torch.no_grad()
-def tta_predict(model, images, use_amp):
-    """
-    Test-time augmentation. Averages class probabilities over a small set of
-    mild geometric views drawn from the same distribution as training
-    augmentation (rotation up to ~10deg). No horizontal flip — chest X-rays are
-    laterally asymmetric (cardiac silhouette, gastric bubble), and the training
-    aug config uses rotation/translation, not flips. Returns averaged probs.
-    """
-    views = [images, TF.rotate(images, 7), TF.rotate(images, -7)]
-    probs = None
-    for v in views:
-        with torch.amp.autocast("cuda", enabled=use_amp):
-            out = model(v)
-        p = torch.softmax(out.float(), dim=1)
-        probs = p if probs is None else probs + p
-    return probs / len(views)
 
 
 def main():
@@ -234,7 +193,7 @@ def main():
     random_state = dl_cfg.get("random_state", 42)
     batch_size = dl_cfg.get("batch_size", 32)
 
-    print(f"[INFO] Splits -> Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
+    print(f" Splits -> Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
 
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -257,7 +216,7 @@ def main():
     fusion_types = dl_cfg.get("fusion_types") or [dl_cfg.get("fusion_type", "concat")]
 
     for fusion_strategy in fusion_types:
-        print(f"\n[INFO] ── Fusion: {fusion_strategy.upper()} ──")
+        print(f"\n ── Fusion: {fusion_strategy.upper()} ──")
 
         # Extract fusion-specific overrides if they exist
         fusion_cfg = dl_cfg.get(fusion_strategy, {})
@@ -279,7 +238,7 @@ def main():
 
         for p in backbone_params:
             p.requires_grad = False
-        print(f"[INFO] Backbones frozen for first {freeze_epochs}/{epochs} epochs.")
+        print(f" Backbones frozen for first {freeze_epochs}/{epochs} epochs.")
 
         criterion = nn.CrossEntropyLoss(weight=class_weight, label_smoothing=dl_cfg.get("label_smoothing", 0.0))
         optimizer = torch.optim.AdamW(head_params, lr=current_lr, weight_decay=current_wd)
@@ -299,7 +258,7 @@ def main():
         best_val_recall = -1.0
         best_val_metrics = None
         best_weights = None
-        val_recalls = []  # track every epoch so we can report a stable averaged metric
+        val_recalls = []
 
         for epoch in range(epochs):
             if epoch == freeze_epochs and freeze_epochs > 0:
@@ -327,7 +286,7 @@ def main():
                     pct_start=0.1,
                     anneal_strategy="cos",
                 )
-                print(f"[INFO] Epoch {epoch+1}: backbones unfrozen "
+                print(f" Epoch {epoch+1}: backbones unfrozen "
                       f"(cnn_lr={cnn_bb_lr:.0e}, vit_lr={vit_bb_lr:.0e})")
 
             model.train()
@@ -365,32 +324,21 @@ def main():
                 best_val_metrics = copy.deepcopy(val_metrics)
                 best_weights = copy.deepcopy(model.state_dict())
 
-        # Attach averaged val metrics so the sweep can rank configs on something
-        # more stable than a single lucky epoch (the val set is tiny).
         if best_val_metrics is not None:
             best_val_metrics["avg_macro_recall"] = float(np.mean(val_recalls))
             best_val_metrics["avg_macro_recall_last3"] = float(np.mean(val_recalls[-3:]))
 
-        print(f"\n[INFO] Evaluating {fusion_strategy.upper()} on test split...")
+        print(f"\n Evaluating {fusion_strategy.upper()} on test split...")
         if best_weights is None:
             raise RuntimeError("Training finished without capturing best model weights.")
         model.load_state_dict(best_weights)
         model.eval()
 
-        # TTA matches the baseline protocol (aligned to config).
-        save_weights_env = os.environ.get("DUAL_BRANCH_SAVE_WEIGHTS")
-        is_reportable = save_weights_env != "0"
-        use_tta = bool(dl_cfg.get("use_tta", False)) and is_reportable
-        print(f"[INFO] TTA at evaluation: {use_tta}")
-
         test_preds, test_labels = [], []
         with torch.no_grad():
             for images, labels in test_loader:
                 images, labels = images.to(device), labels.to(device)
-                if use_tta:
-                    preds = torch.max(tta_predict(model, images, use_amp), 1)[1]
-                else:
-                    preds = torch.max(model(images), 1)[1]
+                preds = torch.max(model(images), 1)[1]
                 test_preds.extend(preds.cpu().tolist())
                 test_labels.extend(labels.cpu().tolist())
 
@@ -407,7 +355,7 @@ def main():
         )
 
         torch.save(best_weights, run_dir / "best_model_weights.pth")
-        print(f"[INFO] {fusion_strategy.upper()} run saved to: {run_dir.resolve()}")
+        print(f" {fusion_strategy.upper()} run saved to: {run_dir.resolve()}")
 
 
 if __name__ == "__main__":

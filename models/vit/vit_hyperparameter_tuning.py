@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from sklearn.metrics import f1_score
+from sklearn.metrics import recall_score
 
 from data.data_reader import load_config, get_required_config_path, load_metadata
 from models.vit.dataset import ChestXrayViTDataset
@@ -68,17 +68,17 @@ def train_and_evaluate(cfg, train_ds, val_ds, metadata_df, vit_cfg, device, epoc
         optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
     )
 
-    best_val_f1 = -1.0
+    best_val_recall = -1.0
     for epoch in range(1, epochs + 1):
         train_one_epoch(model, train_loader, criterion, optimizer, device)
         _, val_y, val_pred = evaluate_epoch(model, val_loader, criterion, device)
         scheduler.step()
 
-        val_f1 = f1_score(val_y, val_pred, average="macro", zero_division=0)
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
+        val_recall = recall_score(val_y, val_pred, average="macro", zero_division=0)
+        if val_recall > best_val_recall:
+            best_val_recall = val_recall
 
-    return best_val_f1
+    return best_val_recall
 
 
 def main():
@@ -106,20 +106,20 @@ def main():
         score = train_and_evaluate(cfg, train_ds, val_ds, metadata_df, vit_cfg, device, epochs=5)
         print(f"  → val macro F1 = {score:.4f}")
 
-        results.append({**cfg, "val_macro_f1": score})
+        results.append({**cfg, "val_macro_recall": score})
 
         if score > best_score:
             best_score = score
             best_cfg   = cfg
 
-    results_df = pd.DataFrame(results).sort_values("val_macro_f1", ascending=False)
+    results_df = pd.DataFrame(results).sort_values("val_macro_recall", ascending=False)
     out_path   = Path("vit_hyperparameter_tuning_results.csv")
     results_df.to_csv(out_path, index=False)
     print(f"\nResults saved to: {out_path}")
 
     print("\nBest config:")
     print(best_cfg)
-    print(f"Best val macro F1: {best_score:.4f}")
+    print(f"Best val macro recall: {best_score:.4f}")
 
 
 if __name__ == "__main__":

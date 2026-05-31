@@ -57,19 +57,10 @@ def train_and_evaluate(cfg, train_ds, val_ds, metadata_df, vit_cfg, device, epoc
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"]
     )
-    warmup_epochs = 2
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
-    )
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, epochs - warmup_epochs)
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
-    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_val_recall = -1.0
-    for epoch in range(1, epochs + 1):
+    for _ in range(1, epochs + 1):
         train_one_epoch(model, train_loader, criterion, optimizer, device)
         _, val_y, val_pred = evaluate_epoch(model, val_loader, criterion, device)
         scheduler.step()
@@ -104,7 +95,7 @@ def main():
     for i, cfg in enumerate(configs, 1):
         print(f"\n[{i}/{len(configs)}] {cfg}")
         score = train_and_evaluate(cfg, train_ds, val_ds, metadata_df, vit_cfg, device, epochs=5)
-        print(f"  → val macro F1 = {score:.4f}")
+        print(f"  → val macro recall = {score:.4f}")
 
         results.append({**cfg, "val_macro_recall": score})
 

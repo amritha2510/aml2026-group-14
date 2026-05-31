@@ -1,5 +1,0 @@
-- almost all images are grayscale, while some are RGB (but actually also grayscale), all moved to single channel.
-- currently all resized to the same H*W (where H=W), independent of the aspect ratio, however the dataset has big difference in terms of their field of coverage and aspect ratio, therefore may require work there!
-- Validation set has no viral, we have to change that and also confirm with the TA's - as it was rejected before (Maybe we need to explain we use the data is 3 classes, not 2)
-- Confirm with TA's if we need to have the exact same preprocessing for all models, i.e. shoul we try to make each model perform its best, or compare them all using the exact same data input
-

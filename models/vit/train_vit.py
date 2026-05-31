@@ -199,7 +199,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Training loop ──
-    best_train_loss = float("inf")
+    best_val_recall = -1.0
     history = []
     unfreeze_at = vit_cfg.get("unfreeze_at_epoch", None)
 
@@ -249,11 +249,10 @@ def main():
             "val_loss": val_loss, "val_recall": val_recall, "val_f1": val_f1,
         })
 
-        # Save best model by train loss (val set too small for model selection)
-        if train_loss < best_train_loss:
-            best_train_loss = train_loss
+        if val_recall > best_val_recall:
+            best_val_recall = val_recall
             torch.save(model.state_dict(), output_dir / "best_model.pt")
-            print(f"  → Saved best model (train loss={train_loss:.4f})")
+            print(f"  → Saved best model (val macro recall={val_recall:.4f})")
 
     # ── Final evaluation using ClassificationEvaluator ──
     # Load best model for test evaluation
@@ -299,7 +298,7 @@ def main():
     torch.save(model.state_dict(), run_dir / "best_model.pt")
 
     print(f"\n[INFO] Run saved to: {run_dir.resolve()}")
-    print(f"[INFO] Best train loss: {best_train_loss:.4f}")
+    print(f"[INFO] Best val macro recall: {best_val_recall:.4f}")
 
 
 if __name__ == "__main__":

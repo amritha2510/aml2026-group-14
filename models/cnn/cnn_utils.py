@@ -69,12 +69,11 @@ def load_images_as_arrays(df):
 def compute_class_weights(y): #to count number of samples per class
     unique, counts = np.unique(y, return_counts=True)
     total = counts.sum()
-
-    weights = np.zeros(len(LABEL_TO_ID))
+    n_classes = len(LABEL_TO_ID)
+    weights = np.zeros(n_classes, dtype=np.float32)
     for u, c in zip(unique, counts):
-        weights[u] = total / c
+        weights[u] = total / (n_classes * c)
+    return torch.tensor(weights, dtype=torch.float32)
 
-    weights = torch.tensor(weights, dtype=torch.float32)
-    weights = weights / weights.sum() #normalising weights
-    return weights
+
 

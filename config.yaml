@@ -23,7 +23,7 @@ logistic_regression:
     enabled: true    
   output_dir: ./outputs/logistic_regression
   experiment_name: logistic_regression
-  max_iter: 1000
+  max_iter: 5000
   class_weight: balanced
   pca_n_components: [0.80, 0.85, 0.90, 0.95]
   random_state: 42

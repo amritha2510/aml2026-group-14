@@ -30,15 +30,6 @@ logistic_regression:
   solver: lbfgs
   regularization_strength: [0.1, 1.0, 10.0]
 
-deep_learning:
-  output_dir: ./outputs/deep_learning
-  experiment_name: dual_branch_baseline
-  batch_size: 32
-  epochs: 20
-  learning_rate: 0.001
-  weight_decay: 1e-4
-  noise_dropout_rate: 0.4
-  random_state: 42
 
 cnn:
   data_augmentation:
@@ -77,3 +68,28 @@ vit:
   use_tta: true
   num_workers: 2
   preserve_aspect_ratio: false
+
+
+dual_conv_vit:
+  output_dir: ./outputs/dual_conv_vit
+  experiment_name: dual_conv_vit_baseline
+  num_classes: 3
+  batch_size: 32
+  epochs: 20
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  noise_dropout_rates: 0.4
+  fusion_types: [concat, attention]
+  label_smoothing: 0.0
+  use_tta: false
+  random_state: 42
+  num_workers: 4
+  freeze_epochs: 5
+
+  # Optimal overrides from hyperparameter sweep
+  concat:
+    learning_rate: 5.0e-5
+    noise_dropout_rates: 0.2
+  attention:
+    learning_rate: 1.0e-5
+    noise_dropout_rates: 0.2
